@@ -5,12 +5,10 @@ import base64
 import json
 import os
 import re
-import subprocess
 from datetime import datetime, timedelta
-from urllib.parse import unquote
 
 import aiohttp
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from custom_globals import Globals
@@ -30,14 +28,26 @@ class Xray(object):
             'log': {
                 'access': access_log,
                 'error': error_log,
-                'loglevel': 'debug'
+                'loglevel': 'debug',
+                'dnsLog': True
             },
             'routing': {
                 'domainStrategy': 'AsIs',
-                'rules': []
+                'rules': [{
+                    "type": "field",
+                    "inboundTag": [],
+                    "port": 53,
+                    "outboundTag": "dns-out"
+                }]
+            },
+            'dns': {
+                'servers': ['8.8.8.8', '1.1.1.1']
             },
             'inbounds': [],
-            'outbounds': []
+            'outbounds': [{
+                'protocol': 'dns',
+                'tag': 'dns-out'
+            }]
         }
         self.conf = {}
         self.port = 40001
@@ -51,7 +61,7 @@ class Xray(object):
             padding = -len(text) % 4
             text += '=' * padding
             return base64.urlsafe_b64decode(text).decode()
-        except:
+        except Exception:
             return source
 
     async def deletelogger(self):
@@ -73,8 +83,10 @@ class Xray(object):
 
     async def kill_process_on_ports(self):
         try:
-            async with Globals.lock:
-                ports = list(Globals.xray_dict.keys())
+            # 获取当前所有使用的端口
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(select(ProxyUrl.current_port).where(ProxyUrl.current_port != 0))
+                ports = {row[0] for row in result}
 
             for port in ports:
                 # 使用lsof命令查找占用端口的进程
@@ -101,21 +113,18 @@ class Xray(object):
             match = re.match(r'(?P<params>.+)@(?P<server>[^:]+):(?P<port>\d+)(?:/\?(?P<extra_params>[^#]+))?(?:#(?P<tag>.+))?', rest)
             if not match:
                 Globals.logger.error(f'Link format invalid, failed to parse: {rest}', self.user)
-                return None
+                return {}
             encryption_password = await self.base64_decode(match.group('params'))
             if encryption_password.count(':') != 1:
                 Globals.logger.error(f'Invalid encryption-password format in link: {rest}', self.user)
-                return None
+                return {}
             encryption, password = encryption_password.split(':')
             address = match.group('server')
             if address == '9.9.9.9':
-                return None
+                return {}
             port = match.group('port')
-            # tag = unquote(match.group('tag')).strip() if match.group('tag') else tag
             data = {
                 'protocol': 'shadowsocks',
-                'address': address,
-                'port': int(port),
                 'tag': tag,
                 'settings': {
                     'servers': [{
@@ -132,7 +141,7 @@ class Xray(object):
 
         except Exception as e:
             Globals.logger.error(f'Error parsing {rest}: {e}', self.user)
-            return None
+            return {}
 
     async def fetch_and_store_subscribe_links(self):
         """第一步：获取需要解析的订阅链接，解析后存入 ProxyUrl 表"""
@@ -184,6 +193,18 @@ class Xray(object):
                         Globals.logger.warning(f'Unsupported link: {link}', self.user)
                         continue
 
+                    # 解析链接以提取服务器地址
+                    rest = link[5:]
+                    match = re.match(r'(?P<params>.+)@(?P<server>[^:]+):(?P<port>\d+)', rest)
+                    if not match:
+                        Globals.logger.error(f'Link format invalid, failed to parse server address: {link}', self.user)
+                        continue
+
+                    server = match.group('server')
+                    if server == '9.9.9.9':
+                        Globals.logger.info(f'Skipped link with server 9.9.9.9: {link}', self.user)
+                        continue
+
                     # 将代理链接存入 ProxyUrl 表
                     proxy_url = ProxyUrl(
                         subscribe_id=subscribe_url_obj.id,
@@ -204,57 +225,82 @@ class Xray(object):
         """第二步：从 ProxyUrl 表中提取所有记录，解析代理链接，生成 Xray 配置"""
         try:
             self.conf = self.conf_template.copy()
-            self.conf['inbounds'] = []
-            self.conf['outbounds'] = []
-            self.conf['routing']['rules'] = []
 
             async with AsyncSessionLocal() as session:
-                result = await session.execute(select(ProxyUrl))
+                result = await session.execute(select(ProxyUrl).where(ProxyUrl.is_using == False))
                 proxy_urls = result.scalars().all()
 
-            for proxy_url_obj in proxy_urls:
-                link = proxy_url_obj.url.strip()
-                if not link:
-                    continue
-                if 'ss://' not in link:
-                    Globals.logger.warning(f'Unsupported link in database: {link}', self.user)
-                    continue
+                for proxy_url_obj in proxy_urls:
+                    link = proxy_url_obj.url.strip()
+                    if not link:
+                        continue
+                    if 'ss://' not in link:
+                        Globals.logger.warning(f'Unsupported link in database: {link}', self.user)
+                        continue
 
-                # 解析代理链接，生成 Xray 配置
-                tag = f'{self.port}out'
-                data = await self.parse_shadowsocks_link(link, tag)
-                if not data:
-                    continue
+                    # 解析代理链接，生成 Xray 配置
+                    tag = f'{self.port}out'
+                    data = await self.parse_shadowsocks_link(link, tag)
+                    if not data:
+                        continue
 
-                # 更新 Xray 配置
-                self.conf['inbounds'].append({
-                    'tag': f'{self.port}in',
-                    'listen': '0.0.0.0',
-                    'port': self.port,
-                    'protocol': 'http',
-                    'settings': {
-                        'allowTransparent': False
-                    }
-                })
-                self.conf['outbounds'].append(data)
-                self.conf['routing']['rules'].append({
-                    'type': 'field',
-                    'inboundTag': [f'{self.port}in'],
-                    'outboundTag': tag
-                })
+                    # 更新 Xray 配置
+                    self.conf['inbounds'].append({
+                        'tag': f'{self.port}in',
+                        'port': self.port,
+                        'protocol': 'http',
+                        'accounts': []
+                    })
+                    self.conf['outbounds'].append(data)
+                    self.conf['routing']['rules'].append({
+                        'type': 'field',
+                        'inboundTag': [f'{self.port}in'],
+                        'outboundTag': tag
+                    })
 
-                # 更新全局字典
-                async with Globals.lock:
-                    Globals.xray_dict[self.port] = {'anti_crawl_count': 0, 'response_times': LimitedList(10)}
-                self.port += 1
+                    # 更新 ProxyUrl 表中的 current_port、is_using字段
+                    await self.update_proxy_url(session, proxy_url_obj.id, self.port)
+
+                    self.port += 1
 
             Globals.logger.info(f'Successfully generated Xray configuration.', self.user)
 
         except Exception as e:
             Globals.logger.error(f'Failed to generate Xray configuration: {e}', self.user)
 
+    async def update_proxy_url(self, session: AsyncSession, proxy_url_id: int, port: int):
+        """更新 ProxyUrl 表中的 current_port 和 is_using 字段"""
+        try:
+            stmt = (
+                update(ProxyUrl).
+                where(ProxyUrl.id == proxy_url_id).
+                values(current_port=port, is_using=False)
+            )
+            await session.execute(stmt)
+            await session.commit()
+            Globals.logger.debug(f'Updated ProxyUrl ID {proxy_url_id} with port {port}', self.user)
+        except Exception as e:
+            Globals.logger.error(f'Failed to update ProxyUrl ID {proxy_url_id}: {e}', self.user)
+
+    async def clear_proxy_urls(self):
+        """运行前清空 proxy_url 表的 current_port 列和 is_using 列"""
+        try:
+            async with AsyncSessionLocal() as session:
+                stmt = (
+                    update(ProxyUrl).
+                    values(current_port=0, is_using=False)
+                )
+                await session.execute(stmt)
+                await session.commit()
+                Globals.logger.info('Cleared current_port and is_using fields for all ProxyUrl records.', self.user)
+        except Exception as e:
+            Globals.logger.error(f'Failed to clear ProxyUrl records: {e}', self.user)
+
     async def run(self):
         try:
+            # 运行前清空 ProxyUrl 表的 current_port 和 is_using 列
+            await self.clear_proxy_urls()
+
             # 第一步：获取并存储订阅链接
             await self.fetch_and_store_subscribe_links()
 
@@ -277,21 +323,3 @@ class Xray(object):
 
         except Exception as e:
             Globals.logger.error(f'Failed to start Xray: {e}', self.user)
-
-    async def stop_task(self):
-        if self.process:
-            self.process.terminate()
-            await self.process.wait()
-
-
-class LimitedList(list):
-    def __init__(self, limit):
-        super().__init__()
-
-        self.limit = limit
-
-    def append(self, object):
-        super().append(object)
-
-        while len(self) > self.limit:
-            del self[0]

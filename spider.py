@@ -1,7 +1,5 @@
 # spider.py
 
-import os
-import shutil
 import time
 import asyncio
 from collections import deque
@@ -12,12 +10,13 @@ from custom_globals import Globals
 
 
 class Spider(object):
-    def __init__(self):
+    def __init__(self, max_concurrent_sessions=5):
         self.data_manager = AsyncTikTokDataManager()
-        self.api = TikTokApi()
         self.user = 'Spider'
         self.account_queue = deque()
         self.queue_set = set()
+        self.max_concurrent_sessions = max_concurrent_sessions
+        self.semaphore = asyncio.Semaphore(self.max_concurrent_sessions)
 
     async def main(self):
         while True:
@@ -56,35 +55,68 @@ class Spider(object):
         tasks = []
         while self.account_queue:
             account = self.account_queue.popleft()
-            account_id = account['id']
-            self.queue_set.remove(account_id)
-            task = asyncio.create_task(self.process_account(account))
+            task = asyncio.create_task(self.process_account_semaphore(account))
             tasks.append(task)
         if tasks:
             await asyncio.gather(*tasks)
 
+    async def process_account_semaphore(self, account):
+        async with self.semaphore:
+            await self.process_account(account)
+
     async def process_account(self, account):
-        account_id = account['id']
         account_name = account['account_name']
         Globals.logger.info(f"Processing account {account_name}.", self.user)
-        try:
-            user_info = await self.get_user_info(account)
-            print(user_info)
-            if user_info:
-                user_videos = await self.get_user_videos(account)
-                print(user_videos)
-        except Exception as e:
-            Globals.logger.error(f"Error processing account {account_name}: {e}", self.user)
 
-    async def get_user_info(self, account):
+        # 获取可用代理
+        proxy = await self.data_manager.get_available_proxy()
+        if not proxy:
+            Globals.logger.error(f"No available proxy for account {account_name}.", self.user)
+            return
+
+        # 标记代理为使用中
+        await self.data_manager.set_proxy_in_use(proxy['id'], True)
+
+        # 准备代理设置
+        proxy_url = f"http://127.0.0.1:{proxy['current_port']}"
+
+        try:
+            # 创建 TikTokApi 实例
+            api = TikTokApi()
+            # 创建带有代理的会话
+            await api.create_session(proxy={'server': proxy_url})
+            session_index = 0  # 因为只有一个会话
+
+            user_info = await self.get_user_info(account, api, session_index)
+            Globals.logger.info(f"User info: {user_info}", self.user)
+            if user_info:
+                user_videos = await self.get_user_videos(account, api, session_index)
+                Globals.logger.info(f"User videos: {user_videos}", self.user)
+
+            # 成功，增加代理的 success_count
+            await self.data_manager.increase_proxy_success(proxy['id'])
+        except Exception as e:
+            Globals.logger.error(f"Error processing account {account_name}: {e}", self.user, exc_info=True)
+            # 失败，增加代理的 fail_count
+            await self.data_manager.increase_proxy_fail(proxy['id'])
+        finally:
+            # 关闭会话
+            if api:
+                await api.close_sessions()
+                await api.stop_playwright()
+            # 释放代理
+            await self.data_manager.set_proxy_in_use(proxy['id'], False)
+
+    async def get_user_info(self, account, api, session_index):
         account_name = account['account_name']
-        user_info = await self.api.user(username=account_name).info()
+        user = api.user(username=account_name)
+        user_info = await user.info(session_index=session_index)
         return user_info
 
-    async def get_user_videos(self, account):
+    async def get_user_videos(self, account, api, session_index):
         account_name = account['account_name']
         videos = []
-        async for video in self.api.user(username=account_name).videos():
+        async for video in api.user(username=account_name).videos(session_index=session_index):
             video_info = video.as_dict
             videos.append(video_info)
         return videos
@@ -106,16 +138,10 @@ class Spider(object):
             await self.api.create_sessions(
                 num_sessions=1,
                 sleep_after=5,
-                headless=False,
-                override_browser_args=['--window-position=9999,9999']
             )
-            self.minimize_chromium()
             Globals.logger.info('Browser rebooted successfully.', self.user)
         except Exception as e:
             Globals.logger.error(f'Failed to reboot the browser: {e}', self.user)
 
     def terminate_playwright_processes(self):
-        pass
-
-    def minimize_chromium(self):
         pass
