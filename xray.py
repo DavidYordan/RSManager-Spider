@@ -52,8 +52,6 @@ class Xray(object):
         self.port = 40001
         self.user = 'Xray'
 
-        Globals.logger.info('Successfully initialized.', self.user)
-
     async def base64_decode(self, source):
         try:
             text = source.replace('_', '/').replace('-', '+')
@@ -75,7 +73,6 @@ class Xray(object):
                     if file_date < cutoff_date:
                         file_path = os.path.join(xray_dir, filename)
                         os.remove(file_path)
-                        Globals.logger.info(f'Deleted old log file: {filename}', self.user)
 
         except Exception as e:
             Globals.logger.error(f'Failed to delete log: {e}', self.user)
@@ -102,7 +99,6 @@ class Xray(object):
                     for pid in pids:
                         kill_command = f'kill -9 {pid}'
                         await asyncio.create_subprocess_shell(kill_command)
-                        Globals.logger.info(f'Killed process with PID {pid} on port {port}', self.user)
         except Exception as e:
             Globals.logger.error(f'Failed to kill processes on ports: {e}', self.user)
 
@@ -201,7 +197,6 @@ class Xray(object):
 
                     server = match.group('server')
                     if server == '9.9.9.9':
-                        Globals.logger.info(f'Skipped link with server 9.9.9.9: {link}', self.user)
                         continue
 
                     # 将代理链接存入 ProxyUrl 表
@@ -212,10 +207,8 @@ class Xray(object):
                         comments=''  # 可以根据需要添加备注
                     )
                     db_session.add(proxy_url)
-                    Globals.logger.debug(f'Added proxy URL to database: {link}', self.user)
 
                 await db_session.commit()
-                Globals.logger.info(f'Parsed and stored links from subscribe ID {subscribe_url_obj.id}', self.user)
 
         except Exception as e:
             Globals.logger.error(f'Failed to parse and store links: {e}', self.user)
@@ -262,8 +255,6 @@ class Xray(object):
 
                     self.port += 1
 
-            Globals.logger.info(f'Successfully generated Xray configuration.', self.user)
-
         except Exception as e:
             Globals.logger.error(f'Failed to generate Xray configuration: {e}', self.user)
 
@@ -277,7 +268,6 @@ class Xray(object):
             )
             await session.execute(stmt)
             await session.commit()
-            Globals.logger.debug(f'Updated ProxyUrl ID {proxy_url_id} with port {port}', self.user)
         except Exception as e:
             Globals.logger.error(f'Failed to update ProxyUrl ID {proxy_url_id}: {e}', self.user)
 
@@ -291,7 +281,6 @@ class Xray(object):
                 )
                 await session.execute(stmt)
                 await session.commit()
-                Globals.logger.info('Cleared current_port and is_using fields for all ProxyUrl records.', self.user)
         except Exception as e:
             Globals.logger.error(f'Failed to clear ProxyUrl records: {e}', self.user)
 
@@ -318,7 +307,6 @@ class Xray(object):
 
             # 启动 Xray
             await asyncio.create_subprocess_exec('./xray', 'run', cwd='environment')
-            Globals.logger.info('Xray started successfully.', self.user)
 
         except Exception as e:
             Globals.logger.error(f'Failed to start Xray: {e}', self.user)

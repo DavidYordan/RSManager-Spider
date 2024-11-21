@@ -1,6 +1,6 @@
 # /models/proxy_url.py
 
-from sqlalchemy import Column, String, Integer, DateTime, BigInteger, Float, Boolean, Computed
+from sqlalchemy import Column, String, Integer, DateTime, BigInteger, Float, Boolean, Computed, Text
 from sqlalchemy.sql import func
 from . import Base
 
@@ -28,4 +28,4 @@ class ProxyUrl(Base):
         ),
         nullable=True
     )  # 生成列
-    comments = Column(String(255))  # 备注信息
+    comments = Column(Text)  # 备注信息

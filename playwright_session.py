@@ -22,8 +22,7 @@ async def get_user_videos(api, username):
 async def handle_commands():
 
     """处理来自父进程的命令。"""
-    api = TikTokApi()
-    await api.create_sessions(num_sessions=1, headless=False, sleep_after=3)
+    api = None
 
     while True:
         # 读取命令
@@ -36,6 +35,10 @@ async def handle_commands():
 
         if not line:
             continue
+
+        if not api:
+            api = TikTokApi()
+            await api.create_sessions(num_sessions=1, headless=True, sleep_after=5)
 
         try:
             command = json.loads(line)

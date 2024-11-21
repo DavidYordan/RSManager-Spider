@@ -8,7 +8,7 @@ from config.config import Config
 DATABASE_URL = f"mysql+aiomysql://{Config.DB_USER}:{Config.DB_PASSWORD}@{Config.DB_HOST}:{Config.DB_PORT}/{Config.DB_NAME}?charset=utf8mb4"
 
 # 创建异步引擎
-async_engine = create_async_engine(DATABASE_URL, echo=True)
+async_engine = create_async_engine(DATABASE_URL, echo=False)
 
 # 创建异步会话
 AsyncSessionLocal = sessionmaker(

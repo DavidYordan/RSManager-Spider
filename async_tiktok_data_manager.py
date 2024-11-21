@@ -1,16 +1,16 @@
 # async_tiktok_data_manager.py
 
+import time
 from models import AsyncSessionLocal
 from models.proxy_url import ProxyUrl
 from models.tiktok_relationship import TikTokRelationship
 from models.tiktok_account import TikTokAccount
 from models.tiktok_video_details import TikTokVideoDetails
 from sqlalchemy.future import select
+from sqlalchemy.sql import func
 from typing import List
 
 from custom_globals import Globals
-
-import random
 
 class AsyncTikTokDataManager(object):
     def __init__(self):
@@ -32,23 +32,30 @@ class AsyncTikTokDataManager(object):
                 result = await session.execute(query)
                 accounts = result.fetchall()
 
+                now = time.time()
                 accounts_list = []
                 for account in accounts:
                     tiktok_account = account.tiktok_account
                     updated_at = account.updated_at
                     comments = account.comments
+
                     if updated_at is None:
                         priority_time = 0  # 不存在于 tiktok_account 表中
                     else:
                         timestamp = updated_at.timestamp()
                         if comments == '获取失败':
-                            priority_time = timestamp + 300
+                            priority_time = timestamp + 600
                         elif comments == '账号不存在':
-                            priority_time = timestamp + 3600
+                            priority_time = timestamp + 3900
                         else:
-                            priority_time = timestamp
+                            priority_time = timestamp + 300
+
+                    if priority_time > now:
+                        continue
+
                     accounts_list.append({
-                        'account_name': tiktok_account.replace(' ', '').replace('@', ''),
+                        'account_name': tiktok_account,
+                        'unique_id': tiktok_account.rsplit('@', 1)[-1].replace(' ', '') if '@' in tiktok_account else tiktok_account.replace(' ', ''),
                         'updated_at': updated_at,
                         'comments': comments,
                         'priority_time': priority_time
@@ -59,51 +66,118 @@ class AsyncTikTokDataManager(object):
                 Globals.logger.error(f"Error occurred while fetching accounts: {e}", self.user)
                 return []
 
-    async def insert_or_update_tiktok_account(self, account_data: dict):
-        Globals.logger.info(f"Account data: {account_data}", self.user)
-        return
+    async def insert_or_update_tiktok_account(self, tiktok_account, account_data: dict):
         async with AsyncSessionLocal() as session:
             try:
-                tiktok_account = account_data.get('tiktok_account')
+                user_info = account_data.get('userInfo')
+                user = user_info.get('user')
+                stats = user_info.get('stats')
+
+                data = {
+                    'tiktok_account': tiktok_account,
+                    'tiktok_id': user.get('id'),
+                    'unique_id': user.get('uniqueId'),
+                    'nickname': user.get('nickname'),
+                    'avatar_larger': user.get('avatarLarger'),
+                    'avatar_medium': user.get('avatarMedium'),
+                    'avatar_thumb': user.get('avatarThumb'),
+                    'signature': user.get('signature'),
+                    'verified': user.get('verified'),
+                    'sec_uid': user.get('secUid'),
+                    'private_account': user.get('privateAccount'),
+                    'following_visibility': user.get('followingVisibility'),
+                    'comment_setting': user.get('commentSetting'),
+                    'duet_setting': user.get('duetSetting'),
+                    'stitch_setting': user.get('stitchSetting'),
+                    'download_setting': user.get('downloadSetting'),
+                    'profile_embed_permission': user.get('profileEmbedPermission'),
+                    'profile_tab_show_playlist_tab': user.get('profileTab', {}).get('showPlaylistTab'),
+                    'commerce_user': user.get('commerceUserInfo', {}).get('commerceUser'),
+                    'tt_seller': user.get('commerceUserInfo', {}).get('ttSeller'),
+                    'relation': user.get('relation'),
+                    'is_ad_virtual': user.get('isAdVirtual'),
+                    'is_embed_banned': user.get('isEmbedBanned'),
+                    'open_favorite': user.get('openFavorite'),
+                    'nick_name_modify_time': user.get('nicknameModifyTime'),
+                    'can_exp_playlist': user.get('canExpPlaylist'),
+                    'secret': user.get('secret'),
+                    'ftc': user.get('ftc'),
+                    'link': user.get('bioLink', {}).get('link'),
+                    'risk': user.get('bioLink', {}).get('risk'),
+                    'digg_count': stats.get('diggCount'),
+                    'follower_count': stats.get('followerCount'),
+                    'following_count': stats.get('followingCount'),
+                    'friend_count': stats.get('friendCount'),
+                    'heart_count': stats.get('heartCount'),
+                    'video_count': stats.get('videoCount'),
+                    'updated_at': func.now(),
+                    'comments': '获取成功'
+                }
+
                 existing_account = await session.get(TikTokAccount, tiktok_account)
+
                 if existing_account:
-                    # 更新已有记录
-                    for key, value in account_data.items():
+                    for key, value in data.items():
                         setattr(existing_account, key, value)
                     await session.commit()
-                    Globals.logger.info(f"TikTok account '{tiktok_account}' updated successfully.", self.user)
                 else:
-                    # 插入新记录
-                    new_account = TikTokAccount(**account_data)
+                    new_account = TikTokAccount(**data)
                     session.add(new_account)
                     await session.commit()
-                    Globals.logger.info(f"TikTok account '{tiktok_account}' inserted successfully.", self.user)
+
             except Exception as e:
                 await session.rollback()
                 Globals.logger.error(f"Error occurred while inserting/updating TikTok account: {e}", self.user)
 
-    async def insert_or_update_tiktok_video_details(self, video_data: dict):
-        Globals.logger.info(f"Video data: {video_data}", self.user)
-        return
+    async def insert_or_update_tiktok_video_details(self, video_datas: list):
         async with AsyncSessionLocal() as session:
             try:
-                tiktok_video_id = video_data.get('tiktok_video_id')
-                existing_video = await session.execute(
-                    select(TikTokVideoDetails).where(TikTokVideoDetails.tiktok_video_id == tiktok_video_id)
-                )
-                existing_video = existing_video.scalar_one_or_none()
-                if existing_video:
-                    # 更新已有记录
-                    for key, value in video_data.items():
-                        setattr(existing_video, key, value)
-                    await session.commit()
-                    Globals.logger.info(f"TikTok video '{tiktok_video_id}' updated successfully.", self.user)
-                else:
-                    # 插入新记录
-                    new_video = TikTokVideoDetails(**video_data)
-                    session.add(new_video)
-                    await session.commit()
-                    Globals.logger.info(f"TikTok video '{tiktok_video_id}' inserted successfully.", self.user)
+                for video_data in video_datas:
+                    tiktok_video_id = video_data.get('id')
+                    video_status = video_data.get('statsV2')
+                    data = {
+                        'tiktok_video_id': tiktok_video_id,
+                        'author_id': video_data.get('author', {}).get('id'),
+                        'AIGCDescription': video_data.get('AIGCDescription'),
+                        'CategoryType': video_data.get('CategoryType'),
+                        'backendSourceEventTracking': video_data.get('backendSourceEventTracking'),
+                        'collected': video_data.get('collected'),
+                        'createTime': video_data.get('createTime'),
+                        'video_desc': video_data.get('desc'),
+                        'digged': video_data.get('digged'),
+                        'diversificationId': video_data.get('diversificationId'),
+                        'duetDisplay': video_data.get('duetDisplay'),
+                        'duetEnabled': video_data.get('duetEnabled'),
+                        'forFriend': video_data.get('forFriend'),
+                        'itemCommentStatus': video_data.get('itemCommentStatus'),
+                        'officalItem': video_data.get('officalItem'),
+                        'originalItem': video_data.get('originalItem'),
+                        'privateItem': video_data.get('privateItem'),
+                        'secret': video_data.get('secret'),
+                        'shareEnabled': video_data.get('shareEnabled'),
+                        'stitchDisplay': video_data.get('stitchDisplay'),
+                        'stitchEnabled': video_data.get('stitchEnabled'),
+                        'can_repost': video_data.get('itemControl', {}).get('can_repost'),
+                        'collectCount': video_status.get('collectCount'),
+                        'commentCount': video_status.get('commentCount'),
+                        'diggCount': video_status.get('diggCount'),
+                        'playCount': video_status.get('playCount'),
+                        'repostCount': video_status.get('repostCount'),
+                        'shareCount': video_status.get('shareCount'),
+                        'updated_at': func.now()
+                    }
+
+                    existing_video = await session.get(TikTokVideoDetails, tiktok_video_id)
+
+                    if existing_video:
+                        for key, value in data.items():
+                            setattr(existing_video, key, value)
+                        await session.commit()
+                    else:
+                        new_video = TikTokVideoDetails(**data)
+                        session.add(new_video)
+                        await session.commit()
+
             except Exception as e:
                 await session.rollback()
                 Globals.logger.error(f"Error occurred while inserting/updating TikTok video details: {e}", self.user)
@@ -115,21 +189,13 @@ class AsyncTikTokDataManager(object):
                     query = select(ProxyUrl).where(
                         ProxyUrl.is_using == False,
                         ProxyUrl.avg_delay > 0
-                    )
+                    ).order_by(ProxyUrl.fail_count.asc(), ProxyUrl.avg_delay.asc())
+                    
                     proxies = (await session.execute(query)).scalars().all()
                     if not proxies:
                         return None
 
-                    # 未使用过的代理，优先级最高
-                    unused_proxies = [p for p in proxies if p.success_count == 0 and p.fail_count == 0]
-                    if unused_proxies:
-                        selected_proxy = min(unused_proxies, key=lambda p: p.avg_delay)
-                    else:
-                        # 根据 success_rate 和 avg_delay 选择
-                        proxies.sort(key=lambda p: (-p.success_rate, p.avg_delay))
-                        # selected_proxy = proxies[0]
-                        # 调试中，暂时随机选择
-                        selected_proxy = proxies[random.randint(0, len(proxies) - 1)]
+                    selected_proxy = proxies[0]
 
                     selected_proxy.is_using = True
                     await session.commit()
@@ -150,7 +216,6 @@ class AsyncTikTokDataManager(object):
                 if proxy:
                     proxy.is_using = is_using
                     await session.commit()
-                    Globals.logger.debug(f"Proxy {proxy_id} is_using set to {is_using}.", self.user)
             except Exception as e:
                 Globals.logger.error(f"Error occurred while updating proxy is_using: {e}", self.user)
 
@@ -161,7 +226,6 @@ class AsyncTikTokDataManager(object):
                 if proxy:
                     proxy.success_count += 1
                     await session.commit()
-                    Globals.logger.debug(f"Increased success count for ProxyUrl ID {proxy_id}.", self.user)
             except Exception as e:
                 Globals.logger.error(f"Error occurred while increasing proxy success count: {e}", self.user)
 
@@ -172,6 +236,20 @@ class AsyncTikTokDataManager(object):
                 if proxy:
                     proxy.fail_count += 1
                     await session.commit()
-                    Globals.logger.debug(f"Increased fail count for ProxyUrl ID {proxy_id}.", self.user)
             except Exception as e:
                 Globals.logger.error(f"Error occurred while increasing proxy fail count: {e}", self.user)
+
+    async def set_comments(self, tiktok_account, comments):
+        async with AsyncSessionLocal() as session:
+            try:
+                account = await session.get(TikTokAccount, tiktok_account)
+                if account:
+                    account.comments = comments
+                    account.updated_at = func.now()
+                    await session.commit()
+                else:
+                    new_account = TikTokAccount(tiktok_account=tiktok_account, comments=comments)
+                    session.add(new_account)
+                    await session.commit()
+            except Exception as e:
+                Globals.logger.error(f"Error occurred while updating comments: {e}", self.user)

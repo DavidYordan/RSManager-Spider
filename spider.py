@@ -17,7 +17,7 @@ class Session(object):
         self.proxy = None
         self.playwright_process = None
         self.in_use = False
-        self.user = 'Spider'  # 确保 user 属性被初始化
+        self.user = 'Session'  # 确保 user 属性被初始化
 
     async def create(self):
         """初始化会话，包括分配命名空间和代理，并启动Playwright会话在该命名空间内。"""
@@ -57,8 +57,6 @@ class Session(object):
             bufsize=1  # Line buffering
         )
 
-        Globals.logger.info(f"Playwright process started in namespace {self.namespace} with proxy http://{local_ip}:{self.proxy['current_port']}", self.user)
-
         # Asynchronously log child process stderr
         asyncio.create_task(self.log_child_stderr())
 
@@ -83,6 +81,7 @@ class Session(object):
                 else:
                     break
             else:
+                await asyncio.sleep(0.2)
                 break
 
     async def close(self):
@@ -95,7 +94,6 @@ class Session(object):
         if self.playwright_process:
             self.playwright_process.terminate()
             self.playwright_process.wait()
-            Globals.logger.info(f"Playwright process in namespace {self.namespace} terminated.", self.user)
 
         # Release the namespace back to NamespaceManager
         if self.namespace:
@@ -106,15 +104,14 @@ class Session(object):
 
     async def rebuild_session(self):
         """重建会话，包括清理现有资源并重新初始化。"""
-        Globals.logger.info(f"Rebuilding session for namespace {self.namespace}.", self.user)
         
+        Globals.logger.debug("Rebuilding session...", self.user)
         # 关闭当前会话资源
         await self.close()
         
         # 调用 create 方法重新初始化会话
         try:
             await self.create()
-            Globals.logger.info(f"Session successfully rebuilt in namespace {self.namespace}.", self.user)
         except Exception as e:
             Globals.logger.error(f"Failed to rebuild session: {str(e)}", self.user)
             raise
@@ -126,7 +123,6 @@ class Session(object):
 
         # 发送命令
         command_str = json.dumps(command) + "\n"
-        Globals.logger.debug(f"Sending command to child process: {command_str}", self.user)
         self.playwright_process.stdin.write(command_str)
         self.playwright_process.stdin.flush()
 
@@ -151,7 +147,6 @@ class Spider(object):
         self.namespace_manager = NamespaceManager(max_namespaces=max_concurrent_sessions)
         self.user = 'Spider'
         self.account_queue = deque()
-        self.queue_set = set()
         self.max_concurrent_sessions = max_concurrent_sessions
         self.semaphore = asyncio.Semaphore(self.max_concurrent_sessions)
         self.session_pool = []
@@ -165,17 +160,20 @@ class Spider(object):
             try:
                 await session.create()
                 self.session_pool.append(session)
-                Globals.logger.info(f"Session created for namespace {session.namespace}", self.user)
             except Exception as e:
                 Globals.logger.error(f"Failed to create session: {e}", self.user)
 
     async def main(self):
         await self.initialize_namespace_and_sessions()
+        await asyncio.sleep(10)
         try:
             while True:
-                await self.fetch_accounts()
-                await self.process_accounts()
-                await asyncio.sleep(5)
+                accounts = await self.data_manager.get_active_tiktok_accounts()
+                if not accounts:
+                    Globals.logger.debug("No active accounts found. Sleeping for 5 seconds.", self.user)
+                    await asyncio.sleep(5)
+                    continue
+                await self.process_accounts(accounts)
         finally:
             await self.close_all_sessions()
 
@@ -185,40 +183,18 @@ class Spider(object):
             await session.close()
         self.session_pool = []
 
-    async def fetch_accounts(self):
-        """从数据管理器获取活跃的 TikTok 账户并添加到处理队列。"""
-        accounts = await self.data_manager.get_active_tiktok_accounts()
-        if not accounts:
-            return
-
-        def compute_priority(account):
-            updated_at = account.get('updated_at')
-            comments = account.get('comments', '')
-            if not updated_at:
-                return 0
-            elif comments == '获取失败':
-                return updated_at + 300
-            elif comments == '账号不存在':
-                return updated_at + 3600
-            else:
-                return updated_at
-
-        accounts.sort(key=compute_priority)
-
-        for account in accounts:
-            unique_id = account['account_name']
-            if unique_id not in self.queue_set:
-                self.account_queue.append(account)
-                self.queue_set.add(unique_id)
-                Globals.logger.info(f"Account {account['account_name']} added to queue.", self.user)
-
-    async def process_accounts(self):
+    async def process_accounts(self, accounts):
         """处理账户队列中的所有账户。"""
+        for account in accounts:
+            if account not in self.account_queue:
+                self.account_queue.append(account)
+
         tasks = []
         while self.account_queue:
             account = self.account_queue.popleft()
             task = asyncio.create_task(self.process_account_semaphore(account))
             tasks.append(task)
+
         if tasks:
             await asyncio.gather(*tasks)
 
@@ -234,7 +210,6 @@ class Spider(object):
                 for session in self.session_pool:
                     if not session.in_use:
                         session.in_use = True
-                        Globals.logger.info(f"Session {session.namespace} acquired.", self.user)
                         return session
             await asyncio.sleep(0.1)
 
@@ -245,52 +220,46 @@ class Spider(object):
 
     async def process_account(self, account):
         """处理单个账户，包括获取用户信息和视频。"""
+        unique_id = account['unique_id']
         account_name = account['account_name']
-        Globals.logger.info(f"Processing account {account_name}.", self.user)
+        Globals.logger.info(f"Processing account {unique_id}.", self.user)
 
         session = await self.get_available_session()
-        Globals.logger.info(f"Session {session.namespace} acquired for account {account_name}.", self.user)
         try:
             # 发送获取用户信息的命令到子进程
-            command = {"action": "get_user_info", "username": account_name}
+            command = {"action": "get_user_info", "username": unique_id}
             user_info = await session.send_command(command)
             if user_info:
                 if user_info.get('status') != 'success':
-                    Globals.logger.error(f"Error getting user info: {user_info.get('message')}", self.user)
+                    message = user_info.get('message', 'Unknown 1')
+                    if message == "'user'":
+                        await self.data_manager.set_comments(account_name, '账号不存在')
+                        return
+                    elif 'No response from child process' in message:
+                        await session.rebuild_session()
+                        return
+                    Globals.logger.error(f"Error getting user info: {message}", self.user)
+                    if session.proxy:
+                        await self.data_manager.increase_proxy_fail(session.proxy['id'])
                     await session.rebuild_session()
                     return
+                
+                await self.data_manager.insert_or_update_tiktok_account(account_name, user_info['data'])
+                
                 # 发送获取用户视频的命令到子进程
-                # 提示成功
-                Globals.logger.info(f"User {account_name} fetched successfully.", self.user)
-                command = {"action": "get_user_videos", "username": account_name}
+                command = {"action": "get_user_videos", "username": unique_id}
                 user_videos = await session.send_command(command)
                 if (len(user_videos) > 0):
-                    Globals.logger.info(f"User {account_name} has {len(user_videos)} videos.", self.user)
+                    await self.data_manager.insert_or_update_tiktok_video_details(user_videos['data'])
 
             # 成功，增加代理的 success_count
             if session.proxy:
                 await self.data_manager.increase_proxy_success(session.proxy['id'])
         except Exception as e:
-            Globals.logger.error(f"Error processing account {account_name}: {e}", self.user)
+            Globals.logger.error(f"Error processing account {unique_id}: {e}", self.user)
             # 失败，增加代理的 fail_count，并重建会话
             if session.proxy:
                 await self.data_manager.increase_proxy_fail(session.proxy['id'])
             await session.rebuild_session()
         finally:
             await self.release_session(session)
-
-    async def get_user_info(self, account, session):
-        """获取用户信息。"""
-        account_name = account['account_name']
-        user = session.api.user(username=account_name)
-        user_info = await user.info()
-        return user_info
-
-    async def get_user_videos(self, account, session):
-        """获取用户视频。"""
-        account_name = account['account_name']
-        videos = []
-        async for video in session.api.user(username=account_name).videos():
-            video_info = video.as_dict
-            videos.append(video_info)
-        return videos
