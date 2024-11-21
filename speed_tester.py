@@ -5,7 +5,6 @@ import aiohttp
 from models import AsyncSessionLocal
 from models.proxy_url import ProxyUrl
 from models.test_speed_url import TestSpeedUrl
-from custom_globals import Globals
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, func
 
@@ -60,10 +59,8 @@ class SpeedTester:
 
                 await self.increment_test_speed_url_success_count(test_speed_url.id)
 
-                Globals.logger.debug(f"Tested {url} via proxy {proxy}: {delay_ms:.2f} ms", self.user)
             except Exception as e:
                 await self.increment_test_speed_url_fail_count(test_speed_url.id)
-                Globals.logger.debug(f"Failed to test {url} via proxy {proxy}: {e}", self.user)
 
     async def update_proxy_url_delay(self, proxy_url_id: int, delay_ms: float):
         async with AsyncSessionLocal() as session:

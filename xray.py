@@ -35,7 +35,6 @@ class Xray(object):
                 'domainStrategy': 'AsIs',
                 'rules': [{
                     "type": "field",
-                    "inboundTag": [],
                     "port": 53,
                     "outboundTag": "dns-out"
                 }]

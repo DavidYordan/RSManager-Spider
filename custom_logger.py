@@ -7,7 +7,7 @@ from logging.handlers import TimedRotatingFileHandler
 class CustomLogger(object):
     def __init__(self, logger_name='ManagerSpider', log_directory='logs', retention_days=7):
         self.logger = logging.getLogger(logger_name)
-        self.logger.setLevel(logging.INFO)
+        self.logger.setLevel(logging.DEBUG)
         
         self.log_directory = log_directory
         os.makedirs(self.log_directory, exist_ok=True)

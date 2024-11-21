@@ -10,6 +10,8 @@ from typing import List
 
 from custom_globals import Globals
 
+import random
+
 class AsyncTikTokDataManager(object):
     def __init__(self):
         self.user = 'AsyncTikTokDataManager'
@@ -46,7 +48,7 @@ class AsyncTikTokDataManager(object):
                         else:
                             priority_time = timestamp
                     accounts_list.append({
-                        'account_name': tiktok_account,
+                        'account_name': tiktok_account.replace(' ', '').replace('@', ''),
                         'updated_at': updated_at,
                         'comments': comments,
                         'priority_time': priority_time
@@ -59,6 +61,7 @@ class AsyncTikTokDataManager(object):
 
     async def insert_or_update_tiktok_account(self, account_data: dict):
         Globals.logger.info(f"Account data: {account_data}", self.user)
+        return
         async with AsyncSessionLocal() as session:
             try:
                 tiktok_account = account_data.get('tiktok_account')
@@ -81,6 +84,7 @@ class AsyncTikTokDataManager(object):
 
     async def insert_or_update_tiktok_video_details(self, video_data: dict):
         Globals.logger.info(f"Video data: {video_data}", self.user)
+        return
         async with AsyncSessionLocal() as session:
             try:
                 tiktok_video_id = video_data.get('tiktok_video_id')
@@ -105,31 +109,39 @@ class AsyncTikTokDataManager(object):
                 Globals.logger.error(f"Error occurred while inserting/updating TikTok video details: {e}", self.user)
 
     async def get_available_proxy(self):
-        async with AsyncSessionLocal() as session:
-            try:
-                query = select(ProxyUrl).where(
-                    ProxyUrl.is_using == False,
-                    ProxyUrl.avg_delay > 0
-                )
-                proxies = (await session.execute(query)).scalars().all()
-                if not proxies:
-                    return None
+        async with Globals.get_available_proxy_lock:
+            async with AsyncSessionLocal() as session:
+                try:
+                    query = select(ProxyUrl).where(
+                        ProxyUrl.is_using == False,
+                        ProxyUrl.avg_delay > 0
+                    )
+                    proxies = (await session.execute(query)).scalars().all()
+                    if not proxies:
+                        return None
 
-                # 未使用过的代理，优先级最高
-                unused_proxies = [p for p in proxies if p.success_count == 0 and p.fail_count == 0]
-                if unused_proxies:
-                    selected_proxy = min(unused_proxies, key=lambda p: p.avg_delay)
-                else:
-                    # 根据 success_rate 和 avg_delay 选择
-                    proxies.sort(key=lambda p: (-p.success_rate, p.avg_delay))
-                    selected_proxy = proxies[0]
-                return {
-                    'id': selected_proxy.id,
-                    'current_port': selected_proxy.current_port
-                }
-            except Exception as e:
-                Globals.logger.error(f"Error occurred while fetching available proxy: {e}", self.user)
-                return None
+                    # 未使用过的代理，优先级最高
+                    unused_proxies = [p for p in proxies if p.success_count == 0 and p.fail_count == 0]
+                    if unused_proxies:
+                        selected_proxy = min(unused_proxies, key=lambda p: p.avg_delay)
+                    else:
+                        # 根据 success_rate 和 avg_delay 选择
+                        proxies.sort(key=lambda p: (-p.success_rate, p.avg_delay))
+                        # selected_proxy = proxies[0]
+                        # 调试中，暂时随机选择
+                        selected_proxy = proxies[random.randint(0, len(proxies) - 1)]
+
+                    selected_proxy.is_using = True
+                    await session.commit()
+
+                    Globals.logger.debug(f"Selected proxy: {selected_proxy}", self.user)
+                    return {
+                        'id': selected_proxy.id,
+                        'current_port': selected_proxy.current_port
+                    }
+                except Exception as e:
+                    Globals.logger.error(f"Error occurred while fetching available proxy: {e}", self.user)
+                    return None
 
     async def set_proxy_in_use(self, proxy_id, is_using: bool):
         async with AsyncSessionLocal() as session:
@@ -138,6 +150,7 @@ class AsyncTikTokDataManager(object):
                 if proxy:
                     proxy.is_using = is_using
                     await session.commit()
+                    Globals.logger.debug(f"Proxy {proxy_id} is_using set to {is_using}.", self.user)
             except Exception as e:
                 Globals.logger.error(f"Error occurred while updating proxy is_using: {e}", self.user)
 
@@ -148,6 +161,7 @@ class AsyncTikTokDataManager(object):
                 if proxy:
                     proxy.success_count += 1
                     await session.commit()
+                    Globals.logger.debug(f"Increased success count for ProxyUrl ID {proxy_id}.", self.user)
             except Exception as e:
                 Globals.logger.error(f"Error occurred while increasing proxy success count: {e}", self.user)
 
@@ -158,5 +172,6 @@ class AsyncTikTokDataManager(object):
                 if proxy:
                     proxy.fail_count += 1
                     await session.commit()
+                    Globals.logger.debug(f"Increased fail count for ProxyUrl ID {proxy_id}.", self.user)
             except Exception as e:
                 Globals.logger.error(f"Error occurred while increasing proxy fail count: {e}", self.user)
