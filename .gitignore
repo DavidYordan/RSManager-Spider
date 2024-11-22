@@ -4,3 +4,4 @@ venv/
 logs/
 environment/
 *.json
+id_rsa
