@@ -16,7 +16,7 @@ class SpeedTester:
         await asyncio.sleep(10)
         while True:
             await self.perform_speed_tests()
-            await asyncio.sleep(300)
+            await asyncio.sleep(3600)
 
     async def perform_speed_tests(self):
         async with AsyncSessionLocal() as session:
