@@ -8,7 +8,7 @@ from custom_logger import CustomLogger
 class Globals(object):
     logger = CustomLogger(
         logger_name="RSManagerSpider",
-        log_directory="environment/log/mainlogs",
+        log_directory="environment/logs/mainlogs",
         level=logging.DEBUG,
     )
     xray_dict = {}
