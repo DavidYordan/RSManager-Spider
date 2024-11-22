@@ -22,14 +22,13 @@ class Xray(object):
         access_log = f'access_{datetime.now().strftime("%Y-%m-%d")}.log'
         error_log = f'error_{datetime.now().strftime("%Y-%m-%d")}.log'
         os.makedirs('environment', exist_ok=True)
-        open(f'environment/log/{access_log}', 'a').close()
-        open(f'environment/log/{error_log}', 'a').close()
+        open(f'environment/logs/xraylogs/{access_log}', 'a').close()
+        open(f'environment/logs/xraylogs/{error_log}', 'a').close()
         self.conf_template = {
             'log': {
                 'access': access_log,
                 'error': error_log,
-                'loglevel': 'debug',
-                'dnsLog': True
+                'loglevel': 'debug'
             },
             'routing': {
                 'domainStrategy': 'AsIs',
