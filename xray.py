@@ -19,11 +19,11 @@ from models.subscribe import SubscribeUrl
 
 class Xray(object):
     def __init__(self):
-        access_log = f'access_{datetime.now().strftime("%Y-%m-%d")}.log'
-        error_log = f'error_{datetime.now().strftime("%Y-%m-%d")}.log'
-        os.makedirs('environment', exist_ok=True)
-        open(f'environment/logs/xraylogs/{access_log}', 'a').close()
-        open(f'environment/logs/xraylogs/{error_log}', 'a').close()
+        access_log = f'logs/xraylogs/access_{datetime.now().strftime("%Y-%m-%d")}.log'
+        error_log = f'logs/xraylogs/error_{datetime.now().strftime("%Y-%m-%d")}.log'
+        os.makedirs('environment/logs/xraylogs', exist_ok=True)
+        open(f'environment/{access_log}', 'a').close()
+        open(f'environment/{error_log}', 'a').close()
         self.conf_template = {
             'log': {
                 'access': access_log,

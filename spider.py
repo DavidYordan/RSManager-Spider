@@ -142,7 +142,7 @@ class Session(object):
                 continue
 
 class Spider(object):
-    def __init__(self, max_concurrent_sessions=2):
+    def __init__(self, max_concurrent_sessions=5):
         self.data_manager = AsyncTikTokDataManager()
         self.namespace_manager = NamespaceManager(max_namespaces=max_concurrent_sessions)
         self.user = 'Spider'
@@ -238,11 +238,18 @@ class Spider(object):
                     elif 'No response from child process' in message:
                         await session.rebuild_session()
                         return
-                    Globals.logger.error(f"Error getting user info: {message}", self.user)
-                    if session.proxy:
-                        await self.data_manager.increase_proxy_fail(session.proxy['id'])
-                    await session.rebuild_session()
-                    return
+                    elif 'TikTok returned an empty response' in message:
+                        if session.proxy:
+                            await self.data_manager.increase_proxy_fail(session.proxy['id'])
+                            await self.data_manager.increase_proxy_fail(session.proxy['id'])
+                        await session.rebuild_session()
+                        return
+                    else:
+                        Globals.logger.error(f"Unknow error getting user info: {message}", self.user)
+                        if session.proxy:
+                            await self.data_manager.increase_proxy_fail(session.proxy['id'])
+                        await session.rebuild_session()
+                        return
                 
                 await self.data_manager.insert_or_update_tiktok_account(account_name, user_info['data'])
                 
