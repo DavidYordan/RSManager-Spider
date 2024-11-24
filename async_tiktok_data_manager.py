@@ -200,7 +200,7 @@ class AsyncTikTokDataManager(object):
                     selected_proxy.is_using = True
                     await session.commit()
 
-                    Globals.logger.debug(f"Selected proxy: {selected_proxy}", self.user)
+                    Globals.logger.debug(f"Selected proxy: {selected_proxy.current_port}", self.user)
                     return {
                         'id': selected_proxy.id,
                         'current_port': selected_proxy.current_port
