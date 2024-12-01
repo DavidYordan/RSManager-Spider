@@ -6,6 +6,7 @@ from models.proxy_url import ProxyUrl
 from models.tiktok_relationship import TikTokRelationship
 from models.tiktok_account import TikTokAccount
 from models.tiktok_video_details import TikTokVideoDetails
+from models.tiktok_user_details import TikTokUserDetails
 from sqlalchemy.future import select
 from sqlalchemy.sql import func
 from typing import List
@@ -71,11 +72,12 @@ class AsyncTikTokDataManager(object):
             try:
                 user_info = account_data.get('userInfo')
                 user = user_info.get('user')
+                tiktok_id = user.get('id')
                 stats = user_info.get('stats')
 
                 data = {
                     'tiktok_account': tiktok_account,
-                    'tiktok_id': user.get('id'),
+                    'tiktok_id': tiktok_id,
                     'unique_id': user.get('uniqueId'),
                     'nickname': user.get('nickname'),
                     'avatar_larger': user.get('avatarLarger'),
@@ -123,6 +125,17 @@ class AsyncTikTokDataManager(object):
                 else:
                     new_account = TikTokAccount(**data)
                     session.add(new_account)
+                    await session.commit()
+
+                existing_user_details = await session.get(TikTokUserDetails, tiktok_id)
+
+                if existing_user_details:
+                    for key, value in data.items():
+                        setattr(existing_user_details, key, value)
+                    await session.commit()
+                else:
+                    new_user_details = TikTokUserDetails(**data)
+                    session.add(new_user_details)
                     await session.commit()
 
             except Exception as e:
