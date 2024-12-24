@@ -13,4 +13,5 @@ class Globals(object):
     )
     xray_dict = {}
     lock = asyncio.Lock()
+    session_lock = asyncio.Lock()
     get_available_proxy_lock = asyncio.Lock()

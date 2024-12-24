@@ -11,8 +11,8 @@ async def main():
     xray_instance = Xray()
     await xray_instance.run()
 
-    speed_tester = SpeedTester()
-    asyncio.create_task(speed_tester.run())
+    # speed_tester = SpeedTester()
+    # asyncio.create_task(speed_tester.run())
     
     spider = Spider()
     await spider.main()

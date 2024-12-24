@@ -23,7 +23,6 @@ class AsyncTikTokDataManager(object):
                 subquery = select(TikTokRelationship.tiktok_account).where(TikTokRelationship.status == True).subquery()
                 query = select(
                     subquery.c.tiktok_account,
-                    TikTokAccount.tiktok_id,
                     TikTokAccount.updated_at,
                     TikTokAccount.comments
                 ).outerjoin(
@@ -38,7 +37,6 @@ class AsyncTikTokDataManager(object):
                 accounts_list = []
                 for account in accounts:
                     tiktok_account = account.tiktok_account
-                    tiktok_id = account.tiktok_id
                     updated_at = account.updated_at
                     comments = account.comments
 
@@ -47,18 +45,17 @@ class AsyncTikTokDataManager(object):
                     else:
                         timestamp = updated_at.timestamp()
                         if comments == '获取失败':
-                            priority_time = timestamp + 600
+                            priority_time = timestamp + 1200
                         elif comments == '账号不存在':
-                            priority_time = timestamp + 3900
+                            priority_time = timestamp + 4200
                         else:
-                            priority_time = timestamp + 300
+                            priority_time = timestamp + 600
 
                     if priority_time > now:
                         continue
 
                     accounts_list.append({
                         'account_name': tiktok_account,
-                        'tiktok_id': tiktok_id,
                         'unique_id': tiktok_account.rsplit('@', 1)[-1].replace(' ', '') if '@' in tiktok_account else tiktok_account.replace(' ', ''),
                         'updated_at': updated_at,
                         'comments': comments,
@@ -119,23 +116,31 @@ class AsyncTikTokDataManager(object):
                     'comments': '获取成功'
                 }
 
-                await self.upsert(TikTokAccount, tiktok_account, data, session)
-                await self.upsert(TikTokUserDetails, tiktok_id, data, session)
+                existing_account = await session.get(TikTokAccount, tiktok_account)
 
-                await session.commit()
+                if existing_account:
+                    for key, value in data.items():
+                        setattr(existing_account, key, value)
+                    await session.commit()
+                else:
+                    new_account = TikTokAccount(**data)
+                    session.add(new_account)
+                    await session.commit()
+
+                existing_user_details = await session.get(TikTokUserDetails, tiktok_id)
+
+                if existing_user_details:
+                    for key, value in data.items():
+                        setattr(existing_user_details, key, value)
+                    await session.commit()
+                else:
+                    new_user_details = TikTokUserDetails(**data)
+                    session.add(new_user_details)
+                    await session.commit()
 
             except Exception as e:
                 await session.rollback()
                 Globals.logger.error(f"Error occurred while inserting/updating TikTok account: {e}", self.user)
-
-    async def upsert(self, model, primary_key, data, session):
-        existing_record = await session.get(model, primary_key)
-        if existing_record:
-            for key, value in data.items():
-                setattr(existing_record, key, value)
-        else:
-            new_record = model(**data)
-            session.add(new_record)
 
     async def insert_or_update_tiktok_video_details(self, video_datas: list):
         async with AsyncSessionLocal() as session:
@@ -180,11 +185,11 @@ class AsyncTikTokDataManager(object):
                     if existing_video:
                         for key, value in data.items():
                             setattr(existing_video, key, value)
+                        await session.commit()
                     else:
                         new_video = TikTokVideoDetails(**data)
                         session.add(new_video)
-
-                await session.commit()
+                        await session.commit()
 
             except Exception as e:
                 await session.rollback()
@@ -194,13 +199,10 @@ class AsyncTikTokDataManager(object):
         async with Globals.get_available_proxy_lock:
             async with AsyncSessionLocal() as session:
                 try:
-                    # query = select(ProxyUrl).where(
-                    #     ProxyUrl.is_using == False,
-                    #     ProxyUrl.avg_delay > 0
-                    # ).order_by(ProxyUrl.fail_count.asc(), ProxyUrl.avg_delay.asc())
                     query = select(ProxyUrl).where(
-                        ProxyUrl.is_using == False
-                    ).order_by(ProxyUrl.fail_count.asc())
+                        ProxyUrl.is_using == False,
+                        ProxyUrl.avg_delay > 0
+                    ).order_by(ProxyUrl.fail_count.asc(), ProxyUrl.avg_delay.asc())
                     
                     proxies = (await session.execute(query)).scalars().all()
                     if not proxies:
@@ -257,18 +259,10 @@ class AsyncTikTokDataManager(object):
                 if account:
                     account.comments = comments
                     account.updated_at = func.now()
+                    await session.commit()
                 else:
                     new_account = TikTokAccount(tiktok_account=tiktok_account, comments=comments)
                     session.add(new_account)
-                
-                details_query = select(TikTokUserDetails).where(TikTokUserDetails.tiktok_account == tiktok_account)
-                result = await session.execute(details_query)
-                details = result.scalars().first()
-                if details:
-                    details.comments = comments
-                    details.updated_at = func.now()
-
-                await session.commit()
-
+                    await session.commit()
             except Exception as e:
                 Globals.logger.error(f"Error occurred while updating comments: {e}", self.user)

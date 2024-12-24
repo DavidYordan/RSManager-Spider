@@ -137,6 +137,33 @@ class Xray(object):
             Globals.logger.error(f'Error parsing {rest}: {e}', self.user)
             return {}
 
+    async def parse_socks5_link(self, link, tag):
+        try:
+            rest = link.replace('socks5://', '')
+            match = re.match(r'(?P<user>[a-zA-Z0-9_-]+):(?P<password>[a-zA-Z0-9_-]+)@(?P<server>(?:\d{1,3}\.){3}\d{1,3}):(?P<port>\d{1,5})(?:#(?P<remark>[a-zA-Z0-9_-]+))?$', rest)
+            if not match:
+                Globals.logger.error(f'Link format invalid, failed to parse: {rest}', self.user)
+                return {}
+            data = {
+                'protocol': 'socks',
+                'tag': tag,
+                'settings': {
+                    'servers': [{
+                        'address': match.group('server'),
+                        'port': int(match.group('port')),
+                        'users': [{
+                            'user': match.group('user'),
+                            'pass': match.group('password')
+                        }]
+                    }]
+                }
+            }
+            return data
+
+        except Exception as e:
+            Globals.logger.error(f'Error parsing {rest}: {e}', self.user)
+            return {}
+
     async def fetch_and_store_subscribe_links(self):
         """第一步：获取需要解析的订阅链接，解析后存入 ProxyUrl 表"""
         try:
@@ -151,6 +178,7 @@ class Xray(object):
 
             # 解析新的订阅链接
             for subscribe_url_obj in new_subscribe_urls:
+                Globals.logger.info(subscribe_url_obj, self.user)
                 await self.parse_and_store_links(subscribe_url_obj)
 
         except Exception as e:
@@ -161,6 +189,7 @@ class Xray(object):
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(subscribe_url_obj.url) as res:
+                    Globals.logger.debug(res, self.user)
                     if res.status != 200:
                         Globals.logger.error(f'Failed to fetch URL: {subscribe_url_obj.url}', self.user)
                         return
@@ -171,6 +200,7 @@ class Xray(object):
 
             # 解码内容
             if '://' not in content:
+                Globals.logger.info(content, self.user)
                 content = await self.base64_decode(content)
             if '://' not in content:
                 return
@@ -225,13 +255,14 @@ class Xray(object):
                     link = proxy_url_obj.url.strip()
                     if not link:
                         continue
-                    if 'ss://' not in link:
-                        Globals.logger.warning(f'Unsupported link in database: {link}', self.user)
-                        continue
-
-                    # 解析代理链接，生成 Xray 配置
                     tag = f'{self.port}out'
-                    data = await self.parse_shadowsocks_link(link, tag)
+                    if 'ss://' in link:
+                        data = await self.parse_shadowsocks_link(link, tag)
+                    elif 'socks5://' in link:
+                        data = await self.parse_socks5_link(link, tag)
+                    else:
+                        Globals.logger.warning(f'Unrecognized protocol for {link}')
+                        continue
                     if not data:
                         continue
 
