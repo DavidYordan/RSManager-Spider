@@ -47,11 +47,11 @@ class AsyncTikTokDataManager(object):
                     else:
                         timestamp = updated_at.timestamp()
                         if comments == '获取失败':
-                            priority_time = timestamp + 600
+                            priority_time = timestamp + 1800
                         elif comments == '账号不存在':
-                            priority_time = timestamp + 3900
+                            priority_time = timestamp + 21600
                         else:
-                            priority_time = timestamp + 300
+                            priority_time = timestamp + 600
 
                     if priority_time > now:
                         continue

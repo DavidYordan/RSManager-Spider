@@ -213,7 +213,7 @@ class Spider(object):
         self.semaphore = asyncio.Semaphore(self.max_concurrent_sessions)
         self.session_pool = []
         self.session_id_counter = 0  # 用于给会话分配唯一的ID
-        self.health_check_interval = 600  # 健康检查的间隔时间（秒）
+        self.health_check_interval = 3600  # 健康检查的间隔时间（秒）
 
     async def initialize_namespace_and_sessions(self):
         """初始化网络命名空间和会话池。"""
