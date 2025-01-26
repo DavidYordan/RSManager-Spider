@@ -375,4 +375,5 @@ class Spider(object):
                 await self.data_manager.increase_proxy_fail(session.proxy['id'])
             await session.rebuild_session()
         finally:
+            await asyncio.sleep(3)
             await self.release_session(session)
